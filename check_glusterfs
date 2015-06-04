@@ -4,7 +4,9 @@
 ## http://exchange.nagios.org/directory/Plugins/System-Metrics/File-System/GlusterFS-checks/details
 
 ### CHANGELOG
-## 1.0.2
+## 1.0.3
+# * 2015.06.03 - Vladimir Vitkov <vvitkov@linux-bg.org>
+# * cleanup and optimisations (we don't care for the free space)
 # * 07/01/2014
 # * Modified by Doug Wilson <dwilson@customink.com>
 # * includes carrillm’s fix to support TB sized volumes
@@ -40,9 +42,10 @@ REVISION="1.0.1"
 usage () {
 	echo ""
 	echo "USAGE: "
-	echo "  $PROGNAME -v VOLUME -n BRICKS [-w GB -c GB]"
+	echo "  $PROGNAME -v VOLUME -n BRICKS"
 	echo "     -n BRICKS: number of bricks"
-	echo "     -w and -c values in GB"
+	echo ""
+	echo " Install in: /usr/lib/nagios/plugins/"
 	exit $STATE_UNKNOWN
 }
 
@@ -50,8 +53,6 @@ while getopts "v:n:w:c:" opt; do
 	case $opt in
 	v) VOLUME=${OPTARG} ;;
 	n) BRICKS=${OPTARG} ;;
-	w) WARN=${OPTARG} ;;
-	c) CRIT=${OPTARG} ;;
 	*) usage ;;
 	esac
 done
@@ -67,7 +68,7 @@ Exit () {
 }
 
 # check for commands
-for cmd in basename bc awk sudo pidof gluster; do
+for cmd in basename awk pidof gluster; do
 	if ! type -p "$cmd" >/dev/null; then
 		Exit UNKNOWN "$cmd not found"
 	fi
@@ -83,9 +84,17 @@ if ! pidof glusterfsd &>/dev/null; then
 	Exit CRITICAL "glusterfsd brick daemon not running"
 fi
 
+if [ "x$(gluster volume status ${VOLUME} detail 2>/dev/null)x" == "xx" ] ; then
+	errors=("${errors[@]}" "Volume ${VOLUME} not found")
+	sep='; '
+	msg=$(printf "${sep}%s" "${errors[@]}")
+	msg=${msg:${#sep}}
+	Exit CRITICAL "${msg}"
+fi
+
 # get volume heal status
 heal=0
-for entries in $(sudo gluster volume heal ${VOLUME} info | awk '/^Number of entries: /{print $4}'); do
+for entries in $(gluster volume heal ${VOLUME} info | awk '/^Number of entries: /{print $4}'); do
 	if [ "$entries" -gt 0 ]; then
 		let $((heal+=entries))
 	fi
@@ -96,7 +105,6 @@ fi
 
 # get volume status
 bricksfound=0
-freegb=9999999
 shopt -s nullglob
 while read -r line; do
 	field=($(echo $line))
@@ -106,23 +114,6 @@ while read -r line; do
 		;;
 	Disk)
 		key=${field[@]:0:3}
-		if [ "${key}" = "Disk Space Free" ]; then
-			freeunit=${field[@]:4}
-			free=${freeunit:0:-2}
-			freeconvgb=`echo "($free*1024)" | bc`
-			unit=${freeunit#$free}
-			if [ "$unit" = "TB" ]; then
-				free=$freeconvgb
-				unit="GB"
-			fi
-			if [ "$unit" != "GB" ]; then
-				Exit UNKNOWN "unknown disk space size $freeunit"
-			fi
-			free=$(echo "${free} / 1" | bc -q)
-			if [ $free -lt $freegb ]; then
-				freegb=$free
-			fi
-		fi
 		;;
 	Online)
 		online=${field[@]:2}
@@ -133,25 +124,13 @@ while read -r line; do
 		fi
 		;;
 	esac
-done < <(sudo gluster volume status ${VOLUME} detail)
+done < <(gluster volume status ${VOLUME} detail)
 
 if [ $bricksfound -eq 0 ]; then
 	Exit CRITICAL "no bricks found"
 elif [ $bricksfound -lt $BRICKS ]; then
 	errors=("${errors[@]}" "found $bricksfound bricks, expected $BRICKS ")
 	ex_stat="WARNING_stat"
-fi
-
-if [ -n "$CRIT" -a -n "$WARN" ]; then
-	if [ $CRIT -ge $WARN ]; then
-		Exit UNKNOWN "critical threshold below warning"
-	elif [ $freegb -lt $CRIT ]; then
-		errors=("${errors[@]}" "free space ${freegb}GB")
-	        ex_stat="CRITICAL_stat"
-	elif [ $freegb -lt $WARN ]; then
-		errors=("${errors[@]}" "free space ${freegb}GB")
-		ex_stat="WARNING_stat"
-	fi
 fi
 
 # exit with warning if errors
@@ -167,4 +146,4 @@ if [ -n "$errors" ]; then
 fi
 
 # exit with no errors
-Exit OK "${bricksfound} bricks; free space ${freegb}GB"
+Exit OK "${bricksfound} bricks"
