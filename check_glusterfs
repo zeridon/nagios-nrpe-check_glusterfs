@@ -68,7 +68,7 @@ Exit () {
 }
 
 # check for commands
-for cmd in basename awk pidof gluster; do
+for cmd in basename awk pidof sudo gluster; do
 	if ! type -p "$cmd" >/dev/null; then
 		Exit UNKNOWN "$cmd not found"
 	fi
@@ -84,7 +84,7 @@ if ! pidof glusterfsd &>/dev/null; then
 	Exit CRITICAL "glusterfsd brick daemon not running"
 fi
 
-if [ "x$(gluster volume status ${VOLUME} detail 2>/dev/null)x" == "xx" ] ; then
+if [ "x$(sudo gluster volume status ${VOLUME} detail 2>/dev/null)x" == "xx" ] ; then
 	errors=("${errors[@]}" "Volume ${VOLUME} not found")
 	sep='; '
 	msg=$(printf "${sep}%s" "${errors[@]}")
@@ -94,7 +94,7 @@ fi
 
 # get volume heal status
 heal=0
-for entries in $(gluster volume heal ${VOLUME} info | awk '/^Number of entries: /{print $4}'); do
+for entries in $(sudo gluster volume heal ${VOLUME} info | awk '/^Number of entries: /{print $4}'); do
 	if [ "$entries" -gt 0 ]; then
 		let $((heal+=entries))
 	fi
@@ -124,7 +124,7 @@ while read -r line; do
 		fi
 		;;
 	esac
-done < <(gluster volume status ${VOLUME} detail)
+done < <(sudo gluster volume status ${VOLUME} detail)
 
 if [ $bricksfound -eq 0 ]; then
 	Exit CRITICAL "no bricks found"
